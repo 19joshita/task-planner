@@ -1,92 +1,108 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
-import { nanoid } from "nanoid";
-import { TaskItem, Category, FiltersState } from "../types";
-import { addDays, format, isWithinInterval, parseISO } from "date-fns";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { differenceInCalendarDays } from "date-fns";
+import { Category } from "../types";
 
-interface TaskContextValue {
-  tasks: TaskItem[];
-  addTask: (t: Omit<TaskItem, "id">) => void;
-  updateTask: (id: string, patch: Partial<TaskItem>) => void;
-  moveTaskByDays: (id: string, deltaDays: number) => void;
-  setTasks: React.Dispatch<React.SetStateAction<TaskItem[]>>;
-  filters: FiltersState;
-  setFilters: React.Dispatch<React.SetStateAction<FiltersState>>;
+export interface Task {
+  id: string;
+  name: string;
+  category: Category;
+  start: string; // ISO day
+  end: string; // ISO day (inclusive)
 }
 
-const TaskContext = createContext<TaskContextValue | null>(null);
+interface Filters {
+  categories: Category[];
+  durationWeeks: number | null;
+  search: string;
+}
 
-export const useTasks = () => {
-  const ctx = useContext(TaskContext);
-  if (!ctx) throw new Error("useTasks must be used within TaskProvider");
-  return ctx;
-};
-
-const sample: TaskItem[] = [
-  {
-    id: nanoid(),
-    name: "Design landing",
-    category: "To Do",
-    start: format(addDays(new Date(), 1), "yyyy-MM-dd"),
-    end: format(addDays(new Date(), 3), "yyyy-MM-dd"),
-  },
-  {
-    id: nanoid(),
-    name: "API integration",
-    category: "In Progress",
-    start: format(addDays(new Date(), 4), "yyyy-MM-dd"),
-    end: format(addDays(new Date(), 6), "yyyy-MM-dd"),
-  },
-];
+interface TaskContextProps {
+  tasks: Task[];
+  addTask: (t: Task) => void;
+  updateTask: (id: string, patch: Partial<Task>) => void;
+  deleteTask: (id: string) => void;
+  filters: Filters;
+  setFilters: React.Dispatch<React.SetStateAction<Filters>>;
+  filteredTasks: Task[];
+  resetTasks: () => void;
+}
+const TaskContext = createContext<TaskContextProps | undefined>(undefined);
+const LS_KEY = "mtp_tasks_v2";
 
 export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  // Toggle between local storage persistence or pure memory by switching the next line
-  const [tasks, setTasks] = useLocalStorage<TaskItem[]>(
-    "tasks@month-planner",
-    sample
-  );
-  // const [tasks, setTasks] = useState<TaskItem[]>(sample);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
 
-  const [filters, setFilters] = useState<FiltersState>({
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(tasks));
+    } catch {}
+  }, [tasks]);
+
+  const [filters, setFilters] = useState<Filters>({
     categories: [],
-    weeks: 0,
+    durationWeeks: null,
     search: "",
   });
 
-  const addTask = (t: Omit<TaskItem, "id">) =>
-    setTasks((ts) => [{ ...t, id: nanoid() }, ...ts]);
-  const updateTask = (id: string, patch: Partial<TaskItem>) =>
-    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const addTask = (t: Task) => setTasks((s) => [...s, t]);
+  const updateTask = (id: string, patch: Partial<Task>) =>
+    setTasks((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const deleteTask = (id: string) =>
+    setTasks((s) => s.filter((x) => x.id !== id));
+  const resetTasks = () => setTasks([]);
 
-  const moveTaskByDays = (id: string, deltaDays: number) =>
-    setTasks((ts) =>
-      ts.map((t) => {
-        if (t.id !== id) return t;
-        const s = parseISO(t.start);
-        const e = parseISO(t.end);
-        const ns = addDays(s, deltaDays);
-        const ne = addDays(e, deltaDays);
-        return {
-          ...t,
-          start: format(ns, "yyyy-MM-dd"),
-          end: format(ne, "yyyy-MM-dd"),
-        };
-      })
-    );
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((t) => {
+      if (filters.categories.length && !filters.categories.includes(t.category))
+        return false;
+      if (
+        filters.search &&
+        !t.name.toLowerCase().includes(filters.search.toLowerCase())
+      )
+        return false;
+      if (filters.durationWeeks) {
+        const days =
+          differenceInCalendarDays(new Date(t.end), new Date(t.start)) + 1;
+        if (days > filters.durationWeeks * 7) return false;
+      }
+      return true;
+    });
+  }, [tasks, filters]);
 
-  const value = useMemo(
-    () => ({
-      tasks,
-      addTask,
-      updateTask,
-      moveTaskByDays,
-      setTasks,
-      filters,
-      setFilters,
-    }),
-    [tasks, filters]
+  return (
+    <TaskContext.Provider
+      value={{
+        tasks,
+        addTask,
+        updateTask,
+        deleteTask,
+        filters,
+        setFilters,
+        filteredTasks,
+        resetTasks,
+      }}
+    >
+      {children}
+    </TaskContext.Provider>
   );
-  return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
+};
+export const useTasks = () => {
+  const ctx = useContext(TaskContext);
+  if (!ctx) throw new Error("useTasks must be used inside TaskProvider");
+  return ctx;
 };

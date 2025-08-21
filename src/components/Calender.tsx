@@ -1,329 +1,364 @@
-// src/components/Calendar.tsx
-import React, { useMemo, useState } from "react";
-import { DndContext, DragEndEvent, useDraggable } from "@dnd-kit/core";
+import React from "react";
 import {
   addDays,
-  endOfMonth,
+  addMonths,
+  subMonths,
+  differenceInCalendarDays,
   format,
-  isAfter,
-  isBefore,
   isSameDay,
   isSameMonth,
-  parseISO,
-  startOfMonth,
 } from "date-fns";
+import { getMonthDays, isoDay, clamp, addDaysSafe } from "../utils/dateUtils";
+import DayCell from "./DayCell";
+import TaskBar from "./Taskbar"; // TaskBar's role: render a single multi-day visual bar (draggable/resizable) — see note below
+import TaskModal from "./TaskModal";
 import { useTasks } from "../context/TaskContext";
-import { TaskItem } from "../types";
-import { daysInMonthGrid, fmt, fromISO, spanDays } from "../utils/date";
-import { DayCell } from "./DayCell";
-import { TaskBar } from "./Taskbar";
-import { Modal, CategorySelect } from "./Modal";
 
-const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** Small wrapper to make children draggable using dnd-kit */
-function DraggableWrapper({
-  id,
-  children,
-}: {
-  id: string;
-  children: React.ReactNode;
-}) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id });
-  const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-    : undefined;
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...listeners}
-      {...attributes}
-      className={`transition-transform ${
-        isDragging ? "opacity-60 scale-[1.02]" : ""
-      }`}
-    >
-      {children}
-    </div>
+export default function Calendar() {
+  // current month state (so we can navigate months)
+  const [currentMonth, setCurrentMonth] = React.useState<Date>(
+    () => new Date()
   );
-}
+  const days = getMonthDays(currentMonth); // days for the active month view
+  const monthStart = new Date(days[0]);
 
-export const Calendar: React.FC = () => {
-  const [anchor, setAnchor] = useState(new Date());
-  const grid = useMemo(() => daysInMonthGrid(anchor), [anchor]);
-  const { tasks, addTask, updateTask, moveTaskByDays, filters } = useTasks();
+  const { filteredTasks, tasks, updateTask } = useTasks();
 
-  // Drag-to-select (for creating tasks)
-  const [dragStart, setDragStart] = useState<string | null>(null);
-  const [dragEnd, setDragEnd] = useState<string | null>(null);
-  const [openCreate, setOpenCreate] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftCat, setDraftCat] = useState<
-    "To Do" | "In Progress" | "Review" | "Completed"
-  >("To Do");
+  // Drag-select create
+  const [isSelecting, setIsSelecting] = React.useState(false);
+  const [selStart, setSelStart] = React.useState<number | null>(null);
+  const [selEnd, setSelEnd] = React.useState<number | null>(null);
 
-  const startISO =
-    dragStart && dragEnd
-      ? isAfter(parseISO(dragStart), parseISO(dragEnd))
-        ? dragEnd
-        : dragStart
-      : null;
-  const endISO =
-    dragStart && dragEnd
-      ? isAfter(parseISO(dragStart), parseISO(dragEnd))
-        ? dragStart
-        : dragEnd
-      : null;
+  // Modal (create/edit)
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [modalRange, setModalRange] = React.useState<{
+    startIso: string;
+    endIso: string;
+  } | null>(null);
+  const [editingTask, setEditingTask] = React.useState<any | null>(null);
 
-  const commitCreate = () => {
-    if (!startISO || !endISO || !draftName.trim()) return;
-    addTask({
-      name: draftName.trim(),
-      category: draftCat,
-      start: startISO,
-      end: endISO,
-    });
-    setDraftName("");
-    setDragStart(null);
-    setDragEnd(null);
-    setOpenCreate(false);
+  // Resizing state
+  const pointerRef = React.useRef<any>(null);
+  const [resizing, setResizing] = React.useState<null | {
+    id: string;
+    side: "left" | "right";
+  }>(null);
+  /* ------------------ Selection lifecycle ------------------ */
+  // onUp captures mouse up for selection and opens modal
+  React.useEffect(() => {
+    function onUp() {
+      if (isSelecting) {
+        setIsSelecting(false);
+        if (selStart !== null && selEnd !== null) {
+          const s = Math.min(selStart, selEnd);
+          const e = Math.max(selStart, selEnd);
+          setModalRange({
+            startIso: isoDay(addDaysSafe(monthStart, s)),
+            endIso: isoDay(addDaysSafe(monthStart, e)),
+          });
+          setModalOpen(true);
+        }
+        setSelStart(null);
+        setSelEnd(null);
+      }
+    }
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, [isSelecting, selStart, selEnd, monthStart]);
+
+  const onCellMouseDown = (e: React.MouseEvent, idx: number) => {
+    // only left button
+    if (e.button !== 0) return;
+    setIsSelecting(true);
+    setSelStart(idx);
+    setSelEnd(idx);
   };
+  const onCellEnter = (idx: number) => {
+    if (!isSelecting) return;
+    setSelEnd(idx);
+  };
+  const tasksForDay = React.useCallback(
+    (idx: number) => {
+      const day = addDaysSafe(monthStart, idx);
+      return filteredTasks.filter((t) => {
+        const a = new Date(t.start);
+        a.setHours(0, 0, 0, 0);
+        const b = new Date(t.end);
+        b.setHours(0, 0, 0, 0);
+        return day >= a && day <= b;
+      });
+    },
+    [filteredTasks, monthStart]
+  );
 
-  // Handle dropping tasks
-  const onDragEnd = (ev: DragEndEvent) => {
-    const id = ev.active.id.toString();
-    const over = ev.over?.id?.toString();
-    if (!over || !over.startsWith("day-")) return;
-    const dayISO = over.replace("day-", "");
-
-    const t = tasks.find((x) => x.id === id);
+  /* ------------------ Move task by drop ------------------ */
+  const onDropTask = (taskId: string, targetIdx: number) => {
+    const t = tasks.find((x) => x.id === taskId);
     if (!t) return;
-
-    const oldStart = parseISO(t.start);
-    const newStart = parseISO(dayISO);
-
-    const deltaDays = Math.round(
-      (newStart.getTime() - oldStart.getTime()) / (1000 * 60 * 60 * 24)
-    );
-    if (deltaDays === 0) return;
-    moveTaskByDays(id, deltaDays);
+    const origStart = new Date(t.start);
+    const origEnd = new Date(t.end);
+    const dur = differenceInCalendarDays(origEnd, origStart);
+    const newStart = addDaysSafe(monthStart, targetIdx);
+    const newEnd = addDaysSafe(newStart, dur);
+    updateTask(taskId, { start: isoDay(newStart), end: isoDay(newEnd) });
   };
 
-  // Filter tasks
-  const filtered = useMemo(() => {
-    const today = new Date();
-    return tasks.filter((t) => {
-      if (
-        filters.search &&
-        !t.name.toLowerCase().includes(filters.search.toLowerCase())
-      )
-        return false;
-      if (filters.categories.length && !filters.categories.includes(t.category))
-        return false;
-      if (filters.weeks > 0) {
-        const limit = addDays(today, filters.weeks * 7);
-        if (isAfter(parseISO(t.start), limit)) return false;
-      }
-      return true;
+  /* ------------------ Click-to-edit ------------------ */
+  const openEdit = (taskId: string) => {
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    setEditingTask(t);
+    setModalRange({ startIso: t.start, endIso: t.end });
+    setModalOpen(true);
+  };
+
+  /* ------------------ Multi-day bar layout & stacking ------------------ */
+  const positioned = React.useMemo(() => {
+    return filteredTasks.map((t) => {
+      const sIdx = clamp(
+        differenceInCalendarDays(new Date(t.start), monthStart),
+        0,
+        days.length - 1
+      );
+      const eIdx = clamp(
+        differenceInCalendarDays(new Date(t.end), monthStart),
+        0,
+        days.length - 1
+      );
+      return { ...t, sIdx, eIdx } as any;
     });
-  }, [tasks, filters]);
-
-  // Build layout segments
-  const segments = useMemo(() => {
-    const first = grid[0];
-    const last = grid[grid.length - 1];
-    const rows: Record<
-      string,
-      { task: TaskItem; startIndex: number; span: number }[]
-    > = {};
-
-    filtered.forEach((task) => {
-      const s = fromISO(task.start);
-      const e = fromISO(task.end);
-      const start = isBefore(s, first) ? first : s;
-      const end = isAfter(e, last) ? last : e;
-
-      for (let i = 0; i < grid.length; i += 7) {
-        const rowStart = grid[i];
-        const rowEnd = grid[i + 6];
-        const segStart = isBefore(start, rowStart) ? rowStart : start;
-        const segEnd = isAfter(end, rowEnd) ? rowEnd : end;
-
-        if (isAfter(segStart, rowEnd) || isBefore(segEnd, rowStart)) continue;
-
-        const startIndex = segStart.getDay(); // 0–6 (Sun–Sat)
-        const visibleSpan = Math.max(
-          1,
-          Math.min(7 - startIndex, spanDays(fmt(segStart), fmt(segEnd)))
+  }, [filteredTasks, days.length, monthStart]);
+  // greedy stacking to avoid overlapping bars vertically
+  const rows = React.useMemo(() => {
+    const r: any[][] = [];
+    const items = positioned.slice().sort((a: any, b: any) => a.sIdx - b.sIdx);
+    items.forEach((it) => {
+      let placed = false;
+      for (let i = 0; i < r.length; i++) {
+        const conflict = r[i].some(
+          (ex: any) => !(it.eIdx < ex.sIdx || it.sIdx > ex.eIdx)
         );
-
-        const rowKey = fmt(rowStart);
-        (rows[rowKey] ||= []).push({ task, startIndex, span: visibleSpan });
+        if (!conflict) {
+          r[i].push(it);
+          placed = true;
+          break;
+        }
       }
+      if (!placed) r.push([it]);
     });
+    return r;
+  }, [positioned]);
 
-    return rows;
-  }, [filtered, grid]);
-
-  // Resize
-  const resizeTask = (
+  /* ------------------ Resizing handlers (pointer events) ------------------ */
+  React.useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!resizing || !pointerRef.current) return;
+      const { startX, origS, origE, cellW } = pointerRef.current;
+      const delta = Math.round((e.clientX - startX) / cellW);
+      if (resizing.side === "left") {
+        const newS = clamp(origS + delta, 0, origE);
+        updateTask(resizing.id, {
+          start: isoDay(addDaysSafe(monthStart, newS)),
+        });
+      } else {
+        const newE = clamp(origE + delta, origS, days.length - 1);
+        updateTask(resizing.id, {
+          end: isoDay(addDaysSafe(monthStart, newE)),
+        });
+      }
+    }
+    function onUp() {
+      setResizing(null);
+      pointerRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    }
+    if (resizing) {
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    }
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [resizing, monthStart, days.length, updateTask]);
+  const beginResize = (
     id: string,
     side: "left" | "right",
-    deltaDays: number
+    clientX: number,
+    origS: number,
+    origE: number
   ) => {
-    const t = tasks.find((x) => x.id === id);
-    if (!t || deltaDays === 0) return;
-    const start = parseISO(t.start);
-    const end = parseISO(t.end);
-    if (side === "left") {
-      const newStart = addDays(start, deltaDays);
-      if (isAfter(newStart, end)) return;
-      updateTask(id, { start: format(newStart, "yyyy-MM-dd") });
-    } else {
-      const newEnd = addDays(end, deltaDays);
-      if (isBefore(newEnd, start)) return;
-      updateTask(id, { end: format(newEnd, "yyyy-MM-dd") });
-    }
+    const grid = document.getElementById("calendar-grid");
+    const cellW = grid ? grid.clientWidth / days.length : 40;
+    pointerRef.current = { startX: clientX, origS, origE, cellW };
+    setResizing({ id, side });
   };
 
-  // drag-select
-  const handleMouseDown = (iso: string) => {
-    setDragStart(iso);
-    setDragEnd(iso);
-  };
-  const handleMouseEnter = (iso: string) => {
-    if (dragStart) setDragEnd(iso);
-  };
-  const finishDragSelect = () => {
-    if (dragStart && dragEnd) setOpenCreate(true);
-  };
+  /* ------------------ Month navigation helpers ------------------ */
+  const gotoPrevMonth = () => setCurrentMonth((p) => subMonths(p, 1));
+  const gotoNextMonth = () => setCurrentMonth((p) => addMonths(p, 1));
+  const gotoToday = () => setCurrentMonth(new Date());
 
-  return (
-    <div className="rounded-2xl border bg-white p-4 shadow-sm">
-      {/* Header */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded-xl border px-3 py-1 hover:bg-gray-100"
-            onClick={() => setAnchor(addDays(startOfMonth(anchor), -1))}
+  /* ------------------ Render helpers ------------------ */
+  const today = new Date();
+
+  function weekdayHeader() {
+    const start = addDays(monthStart, -((monthStart.getDay() + 7) % 7)); // start of week containing monthStart
+    const labels = Array.from({ length: 7 }).map((_, i) =>
+      format(addDays(start, i), "EEE")
+    );
+    return (
+      <div className="grid grid-cols-7 gap-1 mb-2">
+        {labels.map((l) => (
+          <div
+            key={l}
+            className="text-center text-xs font-medium text-gray-600"
           >
-            {"<"}
-          </button>
-          <div className="text-lg font-bold">{format(anchor, "MMMM yyyy")}</div>
-          <button
-            className="rounded-xl border px-3 py-1 hover:bg-gray-100"
-            onClick={() => setAnchor(addDays(endOfMonth(anchor), 1))}
-          >
-            {">"}
-          </button>
-        </div>
-        <button
-          className="rounded-xl border px-4 py-1 hover:bg-gray-100"
-          onClick={() => setAnchor(new Date())}
-        >
-          Today
-        </button>
-      </div>
-
-      {/* Day names */}
-      <div className="grid grid-cols-7 text-center text-sm font-semibold text-gray-600">
-        {dayNames.map((d) => (
-          <div key={d} className="py-2 border-b">
-            {d}
+            {l}
           </div>
         ))}
       </div>
+    );
+  }
+  /* ------------------ Render ------------------ */
+  return (
+    <div>
+      {/* Header with navigation */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={gotoPrevMonth}
+            className="px-3 py-1 rounded-md bg-white border hover:shadow-sm"
+            aria-label="Previous month"
+          >
+            ◀
+          </button>
+          <button
+            onClick={gotoToday}
+            className="px-3 py-1 rounded-md bg-white border hover:shadow-sm"
+            aria-label="Today"
+          >
+            Today
+          </button>
+          <button
+            onClick={gotoNextMonth}
+            className="px-3 py-1 rounded-md bg-white border hover:shadow-sm"
+            aria-label="Next month"
+          >
+            ▶
+          </button>
+        </div>
 
-      {/* Month grid */}
-      <DndContext onDragEnd={onDragEnd}>
-        <div
-          className="grid select-none"
-          style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
-          onMouseUp={finishDragSelect}
-        >
-          {grid.map((d, i) => {
-            const rowStart = i % 7 === 0 ? fmt(d) : null;
+        <div className="text-lg font-semibold w-fit">
+          {format(currentMonth, "MMMM yyyy")}
+        </div>
+
+        <div className="text-sm text-gray-500">
+          <span className="hidden sm:inline">Month view • </span>
+          {filteredTasks.length} visible task
+          {filteredTasks.length !== 1 ? "s" : ""}
+        </div>
+      </div>
+
+      {/* Multi-day task bars stacked above the grid */}
+      <div className="relative mb-4 bg-white rounded-lg p-3 shadow-sm overflow-visible">
+        {/* stacked rows container (absolute-positioned bars) */}
+        <div style={{ minHeight: rows.length * 44 }} className="relative">
+          {rows.map((row, ridx) =>
+            row.map((t: any) => {
+              const leftPct = (t.sIdx / days.length) * 100;
+              const widthPct = ((t.eIdx - t.sIdx + 1) / days.length) * 100;
+              const style: React.CSSProperties = {
+                position: "absolute",
+                left: `${leftPct}%`,
+                width: `${widthPct}%`,
+                top: `${ridx * 44}px`,
+                height: "36px",
+              };
+              return (
+                <div
+                  key={t.id}
+                  style={style}
+                  className="flex items-center gap-2 px-3 rounded-md cursor-grab select-none"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/task-id", t.id);
+                  }}
+                >
+                  {/* Use TaskBar component for visuals and click handling */}
+                  {/* <div>
+                    <TaskBar
+                      task={t}
+                      style={{ width: "100%" }}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/task-id", t.id);
+                      }}
+                      onClick={() => openEdit(t.id)}
+                    />
+                  </div> */}
+                  {/* Left/Right small visible handles (accessible) */}
+                  <div
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      beginResize(t.id, "left", e.clientX, t.sIdx, t.eIdx);
+                    }}
+                    className="w-3 h-6 cursor-ew-resize"
+                    title="Drag to change start date"
+                  />
+                  <div
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      beginResize(t.id, "right", e.clientX, t.sIdx, t.eIdx);
+                    }}
+                    className="w-3 h-6 cursor-ew-resize"
+                    title="Drag to change end date"
+                  />
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Calendar grid (days) */}
+        {weekdayHeader()}
+        <div id="calendar-grid" className="grid grid-cols-7 gap-1 mt-2">
+          {days.map((d, idx) => {
+            const isSelected =
+              selStart !== null &&
+              selEnd !== null &&
+              idx >= Math.min(selStart, selEnd) &&
+              idx <= Math.max(selStart, selEnd);
+
             return (
               <DayCell
-                key={i}
-                dateISO={fmt(d)}
-                isCurrentMonth={isSameMonth(d, anchor)}
-                isToday={isSameDay(d, new Date())}
-                onMouseDown={handleMouseDown}
-                onMouseEnter={handleMouseEnter}
-              >
-                {/* Render tasks at start of week row */}
-                {rowStart && (
-                  <div className="absolute left-0 top-8 right-0 px-1 space-y-1">
-                    {(segments[rowStart] || []).map((seg) => (
-                      <div key={seg.task.id} className="grid grid-cols-7 gap-1">
-                        <div
-                          className="col-span-7 contents"
-                          style={{
-                            gridColumnStart: seg.startIndex + 1,
-                            gridColumnEnd: `span ${seg.span}`,
-                          }}
-                        >
-                          <DraggableWrapper id={seg.task.id}>
-                            <TaskBar
-                              task={seg.task}
-                              dayIndex={seg.startIndex}
-                              span={seg.span}
-                              onResize={resizeTask}
-                            />
-                          </DraggableWrapper>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </DayCell>
+                key={d.toISOString()}
+                idx={idx}
+                dateIso={d.toISOString()}
+                dayNumber={d.getDate()}
+                tasks={tasksForDay(idx)}
+                isSelected={isSelected}
+                onCellMouseDown={onCellMouseDown}
+                onCellEnter={onCellEnter}
+                onDropTask={(taskId) => onDropTask(taskId, idx)}
+              />
             );
           })}
         </div>
-      </DndContext>
+      </div>
 
-      {/* Selection info */}
-      {startISO && endISO && (
-        <div className="mt-3 text-sm text-gray-600">
-          Creating task from{" "}
-          <span className="font-medium">
-            {format(parseISO(startISO), "dd MMM")}
-          </span>{" "}
-          to{" "}
-          <span className="font-medium">
-            {format(parseISO(endISO), "dd MMM")}
-          </span>
-        </div>
-      )}
-
-      {/* Create Task Modal */}
-      <Modal
-        open={openCreate}
-        onClose={() => setOpenCreate(false)}
-        onSubmit={commitCreate}
-        title="New Task"
-        submitText="Create"
-      >
-        <label className="block">
-          <span className="mb-1 block text-sm text-gray-600">Task name</span>
-          <input
-            className="w-full rounded-xl border px-3 py-2"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            placeholder="e.g., Write docs"
-          />
-        </label>
-        <CategorySelect value={draftCat} onChange={setDraftCat} />
-        {startISO && endISO && (
-          <p className="text-sm text-gray-500">
-            Duration: {spanDays(startISO, endISO)} days
-          </p>
-        )}
-      </Modal>
+      {/* Task modal for create / edit */}
+      <TaskModal
+        open={modalOpen}
+        startIso={modalRange?.startIso ?? isoDay(addDaysSafe(monthStart, 0))}
+        endIso={modalRange?.endIso ?? isoDay(addDaysSafe(monthStart, 0))}
+        onClose={() => {
+          setModalOpen(false);
+          setEditingTask(null);
+          setModalRange(null);
+        }}
+        editTask={editingTask}
+      />
     </div>
   );
-};
-
-export default Calendar;
+}

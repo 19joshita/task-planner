@@ -1,25 +1,18 @@
 import React from "react";
-import { TaskProvider } from "./context/TaskContext";
-import { FiltersBar } from "./components/Filters";
-import { Calendar } from "./components/Calender";
+import Calendar from "./components/Calender";
+import FilterPanel from "./components/FilterPanel";
 
-const App: React.FC = () => {
+export default function App() {
   return (
-    <TaskProvider>
-      <div className="mx-auto max-w-6xl p-4">
-        <header className="mb-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Month View Task Planner</h1>
-          <div className="text-sm text-gray-500">
-            React + TS + Tailwind + dnd-kit
-          </div>
-        </header>
-        <FiltersBar />
-        <Calendar />
-        <footer className="mt-6 text-center text-xs text-gray-500">
-          No backend · LocalStorage enabled · Resize/move/create via drag
-        </footer>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
+        <aside className="col-span-3">
+          <FilterPanel />
+        </aside>
+        <main className="col-span-9 bg-white p-4 rounded-xl shadow">
+          <Calendar />
+        </main>
       </div>
-    </TaskProvider>
+    </div>
   );
-};
-export default App;
+}
