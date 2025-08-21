@@ -23,9 +23,10 @@ export default function TaskBar({ task, style, onDragStart, onClick }: Props) {
       onDragStart={onDragStart}
       onClick={onClick}
       style={style}
-      className={`rounded px-2 py-1 text-xs truncate cursor-grab ${
+      title={`${task.name} • ${task.category}`} // tooltip
+      className={`rounded px-2 py-1 text-xs truncate cursor-pointer shadow-sm ${
         COLORS[task.category]
-      } task-shadow`}
+      }`}
     >
       {task.name}
     </div>

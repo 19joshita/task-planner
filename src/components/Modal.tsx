@@ -20,18 +20,32 @@ export const Modal: React.FC<ModalProps> = ({
 }) => {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-3 sm:px-0">
+      {/* Overlay */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
-        {title && <h3 className="mb-4 text-xl font-semibold">{title}</h3>}
-        <div className="space-y-3">{children}</div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button className="rounded-xl border px-3 py-1.5" onClick={onClose}>
+
+      {/* Modal Box */}
+      <div className="relative z-10 w-full max-w-md sm:max-w-lg md:max-w-xl rounded-2xl bg-white p-4 sm:p-6 shadow-xl">
+        {title && (
+          <h3 className="mb-4 text-lg sm:text-xl font-semibold text-gray-800">
+            {title}
+          </h3>
+        )}
+
+        {/* Content */}
+        <div className="space-y-3 text-sm sm:text-base">{children}</div>
+
+        {/* Actions */}
+        <div className="mt-5 flex flex-col-reverse sm:flex-row justify-end gap-2">
+          <button
+            className="w-full sm:w-auto rounded-xl border px-4 py-2 text-sm sm:text-base"
+            onClick={onClose}
+          >
             Cancel
           </button>
           {onSubmit && (
             <button
-              className="rounded-xl bg-black px-3 py-1.5 text-white"
+              className="w-full sm:w-auto rounded-xl bg-black px-4 py-2 text-sm sm:text-base text-white"
               onClick={onSubmit}
             >
               {submitText}
@@ -47,10 +61,12 @@ export const CategorySelect: React.FC<{
   value: Category;
   onChange: (c: Category) => void;
 }> = ({ value, onChange }) => (
-  <label className="block">
-    <span className="mb-1 block text-sm text-gray-600">Category</span>
+  <label className="block w-full">
+    <span className="mb-1 block text-sm sm:text-base text-gray-600">
+      Category
+    </span>
     <select
-      className="w-full rounded-xl border px-3 py-2"
+      className="w-full rounded-xl border px-3 py-2 text-sm sm:text-base"
       value={value}
       onChange={(e) => onChange(e.target.value as Category)}
     >

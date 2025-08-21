@@ -262,7 +262,7 @@ export default function Calendar() {
       </div>
 
       {/* Multi-day task bars stacked above the grid */}
-      <div className="relative mb-4 bg-white rounded-lg p-3 shadow-sm overflow-visible">
+      <div className="relative bg-white rounded-lg p-3 shadow-sm overflow-visible">
         {/* stacked rows container (absolute-positioned bars) */}
         <div style={{ minHeight: rows.length * 44 }} className="relative">
           {rows.map((row, ridx) =>
@@ -322,7 +322,10 @@ export default function Calendar() {
 
         {/* Calendar grid (days) */}
         {weekdayHeader()}
-        <div id="calendar-grid" className="grid grid-cols-7 gap-1 mt-2">
+        <div
+          id="calendar-grid"
+          className="grid grid-cols-3 sm:grid-cols-7 gap-1 mt-2"
+        >
           {days.map((d, idx) => {
             const isSelected =
               selStart !== null &&

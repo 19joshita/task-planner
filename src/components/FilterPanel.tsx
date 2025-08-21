@@ -16,20 +16,26 @@ export default function FilterPanel() {
     }));
 
   return (
-    <div className="bg-white p-4 rounded-xl shadow">
-      <h3 className="font-semibold">Filters</h3>
+    <div className="bg-white p-4 rounded-xl shadow border w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto">
+      <h3 className="font-semibold text-lg sm:text-xl">Filters</h3>
+
+      {/* Search Bar */}
       <input
         placeholder="Search..."
         value={filters.search}
         onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-        className="w-full border p-2 rounded mt-3"
+        className="w-full border p-2 rounded mt-3 text-sm sm:text-base"
       />
 
+      {/* Categories */}
       <div className="mt-4">
-        <div className="font-medium">Category</div>
-        <div className="mt-2 space-y-2">
+        <div className="font-medium text-sm sm:text-base">Category</div>
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-1 gap-2">
           {CATEGORIES.map((c) => (
-            <label key={c} className="flex items-center gap-2">
+            <label
+              key={c}
+              className="flex items-center gap-2 text-sm sm:text-base"
+            >
               <input
                 type="checkbox"
                 checked={filters.categories.includes(c)}
@@ -41,11 +47,15 @@ export default function FilterPanel() {
         </div>
       </div>
 
+      {/* Duration */}
       <div className="mt-4">
-        <div className="font-medium">Duration</div>
+        <div className="font-medium text-sm sm:text-base">Duration</div>
         <div className="mt-2 space-y-1">
           {[1, 2, 3].map((w) => (
-            <label key={w} className="flex items-center gap-2">
+            <label
+              key={w}
+              className="flex items-center gap-2 text-sm sm:text-base"
+            >
               <input
                 type="radio"
                 name="dur"
@@ -57,7 +67,7 @@ export default function FilterPanel() {
               </span>
             </label>
           ))}
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm sm:text-base">
             <input
               type="radio"
               name="dur"
@@ -65,22 +75,26 @@ export default function FilterPanel() {
               onChange={() =>
                 setFilters((f) => ({ ...f, durationWeeks: null }))
               }
-            />{" "}
+            />
             <span>All</span>
           </label>
         </div>
       </div>
 
-      <div className="flex gap-2 mt-4">
+      {/* Buttons */}
+      <div className="flex flex-col sm:flex-row gap-2 mt-4">
         <button
-          className="px-3 py-1 border rounded"
+          className="px-3 py-2 border rounded text-sm sm:text-base w-full sm:w-auto"
           onClick={() =>
             setFilters({ categories: [], durationWeeks: null, search: "" })
           }
         >
           Reset Filters
         </button>
-        <button className="px-3 py-1 border rounded" onClick={resetTasks}>
+        <button
+          className="px-3 py-2 border rounded text-sm sm:text-base w-full sm:w-auto"
+          onClick={resetTasks}
+        >
           Clear Tasks
         </button>
       </div>
